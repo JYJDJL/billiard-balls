@@ -1,0 +1,13 @@
+# Generated textures (reproducible from scripts)
+*.png
+
+# Exported GLB files (reproducible from Blender + scripts)
+*.glb
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Blender backups
+*.blend1
+*.blend2
