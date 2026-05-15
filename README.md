@@ -44,6 +44,7 @@ Then load the matching Cowork skill in Blender, or run the scripts manually.
 | `cue_wrap_roughness.png` | 握把粗糙度贴图 / Wrap roughness |
 | `cue_wrap_normal.png` | 握把法线贴图 / Wrap normal |
 | `billiard_balls_clearcoat.glb` | 16 球 PBR + Clear Coat 模型 |
+| `billiard_complete_scene.glb` | 完整场景（球+杆+动画）GLB，见 [Release](https://github.com/JYJDJL/billiard-balls/releases) |
 
 ## Ball Colors / 球色表
 
@@ -110,6 +111,7 @@ billiard-balls/
 ├── create_balls_in_blender.py    # Blender 台球 3D 模型 + PBR + Clear Coat
 ├── create_cue_in_blender.py      # Blender 球杆 3D 模型 + PBR
 ├── create_break_animation.py     # Blender 开球动画
+├── export_scene.py               # 一键导出完整场景 GLB（含动画）
 ├── billiard-ball.skill           # Cowork skill — 台球生成
 ├── billiard-cue.skill            # Cowork skill — 球杆建模
 ├── billiard-break.skill          # Cowork skill — 开球动画
@@ -128,3 +130,5 @@ billiard-balls/
 | `billiard-ball.skill` | 台球 PBR 纹理 + Blender 材质 + GLB 导出 |
 | `billiard-cue.skill` | 球杆纹理 + 8 部件 3D 模型 + PBR 材质 |
 | `billiard-break.skill` | 开球动画（球杆→母球→球堆散射） |
+
+GLB 完整场景可直接下载：[GitHub Release](https://github.com/JYJDJL/billiard-balls/releases)
