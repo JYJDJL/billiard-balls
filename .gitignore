@@ -14,3 +14,6 @@ __pycache__/
 
 # Cowork auto-generated
 CLAUDE.md
+
+# Skill source directories (canonical form is .skill zip)
+billiard-break/
