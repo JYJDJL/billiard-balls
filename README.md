@@ -44,7 +44,7 @@ Then load the matching Cowork skill in Blender, or run the scripts manually.
 | `cue_wrap_roughness.png` | 握把粗糙度贴图 / Wrap roughness |
 | `cue_wrap_normal.png` | 握把法线贴图 / Wrap normal |
 | `billiard_balls_clearcoat.glb` | 16 球 PBR + Clear Coat 模型 |
-| `billiard_complete_scene.glb` | 完整场景（球+杆+动画）GLB，见 [Release](https://github.com/JYJDJL/billiard-balls/releases) |
+| `break_shot.glb` | 完整场景（球+杆+动画）GLB（85帧/3.5秒/零碰撞），见 [Release](https://github.com/JYJDJL/billiard-balls/releases) |
 
 ## Ball Colors / 球色表
 
@@ -75,23 +75,25 @@ Then load the matching Cowork skill in Blender, or run the scripts manually.
 | ButtLower 后把下 | 15mm | 200mm | 乌木 |
 | Bumper 缓冲垫 | 15mm | 25mm | 黑色橡胶 |
 
-比例系数 30x，匹配台球尺寸（球半径 = 1.0）。
+比例系数 30x（Cue 空物体 scale），匹配台球尺寸（球半径 = 1.0）。
 
 球杆使用完整 PBR 材质：枫木/乌木/皮革部件有 BaseColor + Roughness + Normal 三通道贴图，Joint 有 Metallic 金属度。
 
 ## Break Shot Animation / 开球动画
 
-120 帧 / 24fps / 5 秒，手写关键帧动画：
+85 帧 / 24fps / 3.54 秒，单调散射算法，零碰撞：
 
 | 阶段 | 帧范围 | 说明 |
 |------|--------|------|
-| 后拉蓄力 | 0-12 | 球杆后拉 |
-| 前冲击球 | 12-20 | 杆头精确接触母球背面 |
-| 母球加速 | 20-44 | 母球冲向球堆 |
-| 撞顶点球 | 44 | 母球与 1 号球精确接触（球心距=2.0） |
-| 能量传递 | 44-54 | 母球偏转，1 号球前冲 |
-| 1 号偏转 | 50-58 | 1 号球绕开 8 号和 13 号 |
-| 彩球散射 | 55-120 | 全部彩球四散 |
+| 球杆后拉 | 0-12 | 球杆后拉 0.5 单位 |
+| 前冲击球 | 12-22 | 杆头在第 22 帧接触母球背面 |
+| 推击 | 22-28 | 球杆前推，母球开始滚动 |
+| 球杆回撤 | 30-48 | 与散射同步回撤 |
+| 母球滚动 | 22-36 | 母球从 Y=-8 滚至 Y=-2，接触 1 号球 |
+| 彩球散射 | 36-85 | 15 颗彩球同时向四面散开（无停顿） |
+| 母球散射 | 38-85 | 母球延迟 2 帧（防穿模） |
+
+散射算法：`target_x = start_x × 3.5, target_y = start_y + 14`（单调映射，保证路径不交叉）
 
 ## Engine Compatibility / 引擎兼容
 

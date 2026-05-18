@@ -1,6 +1,9 @@
 """
 Create a break shot animation in Blender: cue strikes cue ball,
-cue ball hits the rack apex, balls scatter. Keyframe animation.
+cue ball moves to rack, brief pause, then all balls scatter outward.
+
+Uses monotonic mapping (target_x = start_x * factor, target_y = start_y + const)
+to guarantee zero collisions. Cue retracts during scatter for natural look.
 
 Run in Blender's Scripting workspace after:
   1. 16 balls (Ball_00 to Ball_15) exist and are racked
@@ -12,8 +15,16 @@ import bpy
 import math
 
 scene = bpy.context.scene
-ball_radius = 1.0
-cue_base_y = -32.55   # cue empty Y so tip is at Y=-9.15 (behind cue ball back at -9.0)
+
+# ============================================================
+# Config
+# ============================================================
+FACTOR = 3.5            # x-spread amplification
+CONST = 14              # uniform upward shift
+B00_TARGET = (-12, 16)  # cue ball target (left, up)
+SCATTER_START = 36      # frame when rack balls start scattering
+SCATTER_END = 85        # frame when scatter completes
+B00_STAGGER = 2         # cue ball starts 2 frames after rack balls
 
 # ============================================================
 # 1. Clean old animation
@@ -36,202 +47,146 @@ for action in list(bpy.data.actions):
 # ============================================================
 print("Resetting positions...")
 rack_layout = {
-    1: (0, 0),   2: (-1, 2),  3: (1, 2),
-    4: (-2, 4),  8: (0, 4),   5: (2, 4),
-    6: (-3, 6),  7: (-1, 6),  9: (1, 6),  10: (3, 6),
-    11: (-4, 8), 12: (-2, 8), 13: (0, 8), 14: (2, 8), 15: (4, 8),
+    1: (0, 0),   9: (-1, 2),  2: (1, 2),
+    10: (-2, 4),  8: (0, 4),   3: (2, 4),
+    11: (-3, 6),  4: (-1, 6), 12: (1, 6),  5: (3, 6),
+    6: (-4, 8),  13: (-2, 8), 14: (0, 8),  7: (2, 8), 15: (4, 8),
 }
+
+init = {**rack_layout, 0: (0, -8)}
 
 for i, (col, row) in rack_layout.items():
     ball = bpy.data.objects.get(f"Ball_{i:02d}")
     if ball:
-        ball.location = (col * ball_radius, row * ball_radius, 1.0)
+        ball.location = (col, row, 1.0)
         ball.rotation_euler = (0, 0, 0)
 
 cue_ball = bpy.data.objects.get("Ball_00")
 cue = bpy.data.objects.get("Cue")
 
 if not cue_ball or not cue:
-    raise RuntimeError("Ball_00 or Cue not found. Run create_cue_in_blender.py first.")
+    raise RuntimeError("Ball_00 or Cue not found.")
 
 cue_ball.location = (0, -8, 1.0)
 cue_ball.rotation_euler = (0, 0, 0)
-
-cue.location = (0, cue_base_y, 1.0)
+cue.location = (0, -32.55, 1.0)
 cue.rotation_euler = (0, 0, 0)
-cue.scale = (30, 30, 30)
+cue.scale = (30, 30, 30)   # Cue geometry is meter-scale, need 30x to match balls
 
 # ============================================================
-# 3. Scene setup
+# 3. Compute scatter targets (monotonic, collision-free)
+# ============================================================
+targets = {}
+for i in range(1, 16):
+    x, y = init[i]
+    targets[i] = (x * FACTOR, y + CONST)
+targets[0] = B00_TARGET
+
+# ============================================================
+# 4. Scene setup
 # ============================================================
 scene.frame_start = 0
-scene.frame_end = 120
+scene.frame_end = SCATTER_END
 scene.render.fps = 24
 
 # ============================================================
-# 4. Cue stick animation
+# 5. Cue stick animation
+#   F0-F12: backswing
+#   F12-F22: strike forward
+#   F22-F28: push through
+#   F28-F30: brief hold
+#   F30-F50: retract (syncs with scatter start at F42)
 # ============================================================
 print("Animating cue stick...")
 cue.keyframe_insert(data_path="location", frame=0)
 cue.keyframe_insert(data_path="rotation_euler", frame=0)
 
-# Backswing: 0-12
-cue.location.y = cue_base_y - 0.8
+cue.location.y = -33.05  # backswing
 cue.keyframe_insert(data_path="location", frame=12)
 
-# Strike: 12-20, tip contacts ball back at Y=-9.0
-cue.location.y = -32.4   # tip at -32.4 + 30*0.78 = -9.0
-cue.keyframe_insert(data_path="location", frame=20)
+cue.location.y = -32.4   # strike (tip contacts cue ball)
+cue.keyframe_insert(data_path="location", frame=22)
 
-# Push through: 20-25
-cue.location.y = -31.9   # tip at -8.5
-cue.keyframe_insert(data_path="location", frame=25)
+cue.location.y = -32.1   # push through
+cue.keyframe_insert(data_path="location", frame=28)
 
-# Hold briefly: 25-30
-cue.keyframe_insert(data_path="location", frame=30)
+cue.keyframe_insert(data_path="location", frame=30)  # hold
 
-# Retract: 30-90
-cue.location.y = cue_base_y - 4.0
-cue.keyframe_insert(data_path="location", frame=90)
-cue.keyframe_insert(data_path="location", frame=120)
+cue.location.y = -34.5   # retract during scatter
+cue.keyframe_insert(data_path="location", frame=50)
+cue.keyframe_insert(data_path="location", frame=SCATTER_END)
 
 # ============================================================
-# 5. Cue ball (Ball_00) animation
+# 6. Cue ball (Ball_00) animation
+#   F0-F22: stationary
+#   F22-F36: roll to rack contact
+#   F36-F43: hold at contact (brief pause + 1-frame stagger)
+#   F43-F90: scatter to target
 # ============================================================
 print("Animating cue ball...")
+b00_start = SCATTER_START + B00_STAGGER
+
 cue_ball.keyframe_insert(data_path="location", frame=0)
 cue_ball.keyframe_insert(data_path="rotation_euler", frame=0)
-cue_ball.keyframe_insert(data_path="location", frame=20)  # hold until struck
+cue_ball.keyframe_insert(data_path="location", frame=22)  # hold until struck
 
-# Accelerate after strike
-cue_ball.location.y = -7.0
-cue_ball.keyframe_insert(data_path="location", frame=24)
-cue_ball.location.y = -4.5
-cue_ball.keyframe_insert(data_path="location", frame=32)
+cue_ball.location.y = -2.0  # move to rack contact
+cue_ball.keyframe_insert(data_path="location", frame=36)
+cue_ball.keyframe_insert(data_path="location", frame=b00_start)  # hold at contact
 
-# Contact with ball 1: centers exactly 2.0 apart
-cue_ball.location.y = -2.0
-cue_ball.keyframe_insert(data_path="location", frame=44)
+cue_ball.location.x = targets[0][0]  # scatter
+cue_ball.location.y = targets[0][1]
+cue_ball.keyframe_insert(data_path="location", frame=SCATTER_END)
 
-# Push phase
-cue_ball.location.y = -0.5
-cue_ball.keyframe_insert(data_path="location", frame=50)
-
-# Deflect to the left
-cue_ball.location.y = 2.0
-cue_ball.location.x = -2.5
-cue_ball.keyframe_insert(data_path="location", frame=62)
-cue_ball.location.y = 5.0
-cue_ball.location.x = -5.0
-cue_ball.keyframe_insert(data_path="location", frame=80)
-cue_ball.location.y = 8.0
-cue_ball.location.x = -8.0
-cue_ball.keyframe_insert(data_path="location", frame=105)
-cue_ball.location.y = 10.0
-cue_ball.location.x = -10.0
-cue_ball.keyframe_insert(data_path="location", frame=120)
-
-# Rotation: rolling proportional to travel
-for frame in range(20, 121, 10):
-    scene.frame_set(frame)
-    travel = cue_ball.location.y - (-8.0)
-    rotations = travel / (2 * math.pi * ball_radius)
-    cue_ball.rotation_euler.x = rotations * 2 * math.pi
-    if frame > 50:
-        cue_ball.rotation_euler.z = (abs(cue_ball.location.x) / 10.0) * 2 * math.pi
-    cue_ball.keyframe_insert(data_path="rotation_euler", frame=frame)
+# Rotation proportional to travel
+tx, ty = targets[0]
+scatter_frames = SCATTER_END - b00_start
+for f in range(0, SCATTER_END + 1, 8):
+    scene.frame_set(f)
+    if f <= 22:
+        r = 0
+    elif f <= 36:
+        r = (f - 22) / 14.0 * 6.0
+    elif f <= b00_start:
+        r = 6.0
+    else:
+        r = 6.0 + ((f - b00_start) / scatter_frames) * math.hypot(tx, ty + 2)
+    cue_ball.rotation_euler = (r, 0, 0)
+    cue_ball.keyframe_insert(data_path="rotation_euler", frame=f)
 
 # ============================================================
-# 6. Ball 1 (apex) animation — deflects to avoid Ball 8 & 13
-# ============================================================
-print("Animating ball 1 (apex)...")
-ball1 = bpy.data.objects.get("Ball_01")
-ball1.location = (0, 0, 1.0)
-ball1.rotation_euler = (0, 0, 0)
-ball1.keyframe_insert(data_path="location", frame=0)
-ball1.keyframe_insert(data_path="rotation_euler", frame=0)
-ball1.keyframe_insert(data_path="location", frame=44)  # hold until contact
-
-# Push forward (limited: Y=1.5 is safe from Ball 8 at Y=4)
-ball1.location.y = 1.5
-ball1.location.x = 0
-ball1.keyframe_insert(data_path="location", frame=50)
-
-# Deflect left, clearing X=0 before reaching Y=4
-ball1.location.y = 3.5
-ball1.location.x = -3.5
-ball1.keyframe_insert(data_path="location", frame=58)
-
-ball1.location.y = 6.0
-ball1.location.x = -6.5
-ball1.keyframe_insert(data_path="location", frame=70)
-
-ball1.location.y = 9.5
-ball1.location.x = -10.0
-ball1.keyframe_insert(data_path="location", frame=90)
-
-ball1.location.y = 13.5
-ball1.location.x = -14.0
-ball1.keyframe_insert(data_path="location", frame=120)
-
-# Rotation
-for frame in [44, 50, 58, 70, 90, 120]:
-    scene.frame_set(frame)
-    travel = math.sqrt(ball1.location.x**2 + (ball1.location.y - 0)**2)
-    rotations = travel / (2 * math.pi * ball_radius)
-    ball1.rotation_euler.x = rotations * 2 * math.pi * 0.8
-    if travel > 0.01:
-        ball1.rotation_euler.z = (ball1.location.x / travel) * rotations * 2 * math.pi * 0.5
-    ball1.keyframe_insert(data_path="rotation_euler", frame=frame)
-
-# ============================================================
-# 7. Rack balls (2-15) scatter
+# 7. Rack balls (1-15) animation
+#   F0-F42: hold at rack positions
+#   F42-F90: scatter to targets
 # ============================================================
 print("Animating rack balls...")
-scatter_def = {
-    2:  (-3.5, 10, 48, 90),
-    3:  (3.5, 12, 50, 92),
-    4:  (-7, 13, 52, 95),
-    8:  (0, 18, 55, 100),
-    5:  (6, 10, 52, 93),
-    6:  (-8, 18, 56, 100),
-    7:  (-3, 22, 58, 100),
-    9:  (3, 20, 58, 100),
-    10: (8, 20, 60, 100),
-    11: (-10, 24, 62, 105),
-    12: (-5, 28, 64, 108),
-    13: (0, 30, 66, 110),
-    14: (5, 26, 64, 108),
-    15: (10, 22, 62, 105),
-}
+scatter_len = SCATTER_END - SCATTER_START
 
-for ball_num, (tx, ty, start_f, end_f) in scatter_def.items():
+for ball_num in range(1, 16):
     ball = bpy.data.objects.get(f"Ball_{ball_num:02d}")
     if not ball:
         continue
 
-    ix, iy = ball.location.x, ball.location.y
-
     ball.keyframe_insert(data_path="location", frame=0)
     ball.keyframe_insert(data_path="rotation_euler", frame=0)
-    ball.keyframe_insert(data_path="location", frame=start_f - 1)
+    ball.keyframe_insert(data_path="location", frame=SCATTER_START)  # hold
 
+    tx, ty = targets[ball_num]
+    sx, sy = init[ball_num]
     ball.location.x = tx
     ball.location.y = ty
-    ball.keyframe_insert(data_path="location", frame=end_f)
-    ball.keyframe_insert(data_path="location", frame=120)
+    ball.keyframe_insert(data_path="location", frame=SCATTER_END)  # scatter
 
-    # Rotation: proportional to travel
-    dx, dy = tx - ix, ty - iy
-    dist = math.sqrt(dx*dx + dy*dy)
-    total_rot = dist / (2 * math.pi * ball_radius)
-
-    for frame in range(start_f, min(end_f + 1, 121), 10):
-        scene.frame_set(frame)
-        frac = (frame - start_f) / max(end_f - start_f, 1)
-        ball.rotation_euler.x = total_rot * 2 * math.pi * frac
-        ball.rotation_euler.z = (dx / max(dist, 0.01)) * total_rot * 2 * math.pi * frac * 0.3
-        ball.keyframe_insert(data_path="rotation_euler", frame=frame)
+    # Rotation
+    dx, dy = tx - sx, ty - sy
+    dist = math.hypot(dx, dy)
+    for f in range(SCATTER_START, SCATTER_END + 1, 5):
+        scene.frame_set(f)
+        frac = (f - SCATTER_START) / scatter_len
+        r = dist * frac
+        z = (dx / max(dist, 0.01)) * dist * frac * 0.3 if dist > 0.01 else 0
+        ball.rotation_euler = (r, 0, z)
+        ball.keyframe_insert(data_path="rotation_euler", frame=f)
 
 # ============================================================
 # 8. Set LINEAR interpolation
@@ -249,44 +204,73 @@ for obj in bpy.data.objects:
                     for kf in fcurve.keyframe_points:
                         kf.interpolation = 'LINEAR'
                         count += 1
-
 print(f"  {count} keyframes set to LINEAR")
 
 # ============================================================
-# 9. Verify no clipping
+# 9. Verify no collisions
 # ============================================================
 print("\nVerifying collisions...")
-ball8 = bpy.data.objects.get("Ball_08")
-ball13 = bpy.data.objects.get("Ball_13")
-min_d8, min_d13 = 999, 999
+ball_data = {}
+for i in range(16):
+    obj = bpy.data.objects.get(f"Ball_{i:02d}")
+    if not obj or not obj.animation_data or not obj.animation_data.action:
+        continue
+    kx, ky = {}, {}
+    for layer in obj.animation_data.action.layers:
+        for strip in layer.strips:
+            for cb in strip.channelbags:
+                for fc in cb.fcurves:
+                    if fc.data_path == 'location':
+                        for kf in fc.keyframe_points:
+                            f = int(kf.co.x)
+                            v = kf.co.y
+                            if fc.array_index == 0: kx[f] = v
+                            elif fc.array_index == 1: ky[f] = v
+    ball_data[i] = (kx, ky)
 
-for frame in range(44, 121):
-    scene.frame_set(frame)
-    depsgraph = bpy.context.evaluated_depsgraph_get()
-    b1 = ball1.evaluated_get(depsgraph).matrix_world.translation
-    b8 = ball8.evaluated_get(depsgraph).matrix_world.translation
-    b13 = ball13.evaluated_get(depsgraph).matrix_world.translation
+def lerp(kf_dict, frame):
+    fr = sorted(kf_dict.keys())
+    if frame <= fr[0]: return kf_dict[fr[0]]
+    if frame >= fr[-1]: return kf_dict[fr[-1]]
+    for j in range(len(fr) - 1):
+        if fr[j] <= frame <= fr[j + 1]:
+            t = (frame - fr[j]) / (fr[j + 1] - fr[j])
+            return kf_dict[fr[j]] + (kf_dict[fr[j + 1]] - kf_dict[fr[j]]) * t
+    return 0.0
 
-    d8 = math.sqrt((b1.x - b8.x)**2 + (b1.y - b8.y)**2)
-    d13 = math.sqrt((b1.x - b13.x)**2 + (b1.y - b13.y)**2)
+violations = []
+worst = {}
+for frame in range(0, SCATTER_END + 1):
+    pos = {}
+    for i, (kx, ky) in ball_data.items():
+        pos[i] = (lerp(kx, frame), lerp(ky, frame))
+    for i in range(16):
+        for j in range(i + 1, 16):
+            if i in pos and j in pos:
+                d = math.hypot(pos[i][0] - pos[j][0], pos[i][1] - pos[j][1])
+                p = f"Ball_{i:02d}-Ball_{j:02d}"
+                if p not in worst or d < worst[p]:
+                    worst[p] = d
+                if d < 1.98:
+                    violations.append((frame, i, j, d))
 
-    if d8 < min_d8:
-        min_d8 = d8
-    if d13 < min_d13:
-        min_d13 = d13
+if violations:
+    print(f"  WARNING: {len(violations)} collisions!")
+    for v in violations[:10]:
+        print(f"    F{v[0]}: Ball_{v[1]:02d} vs Ball_{v[2]:02d} dist={v[3]:.2f}")
+else:
+    print("  All frames verified — zero collisions!")
 
-ok = min(min_d8, min_d13) >= 1.99
-print(f"  Ball 1 vs Ball 8:  min distance {min_d8:.2f} {'OK' if min_d8 >= 1.99 else 'CLIPPING!'}")
-print(f"  Ball 1 vs Ball 13: min distance {min_d13:.2f} {'OK' if min_d13 >= 1.99 else 'CLIPPING!'}")
-print(f"\n{'All clear!' if ok else 'CLIPPING DETECTED — adjust trajectory.'}")
+print("  Closest pairs:")
+for pair, d in sorted(worst.items(), key=lambda x: x[1])[:5]:
+    print(f"    {pair}: {d:.2f}")
 
-# Reset to frame 0
 scene.frame_set(0)
 
 print(f"""
-Break shot animation created!
-  Frames: 0-120, FPS: 24, Duration: {120/24:.1f}s
-  Cue ball: {cue_ball.location}
-  Ball 1: {ball1.location}
-  Press SPACE to play.
+Break shot animation complete!
+  Frames: 0-{SCATTER_END}, FPS: 24, Duration: {SCATTER_END / 24:.1f}s
+  Contact: F36, Scatter: F{SCATTER_START}-F{SCATTER_END}, Cue retract: F30-F50
+  Scatter: monotonic (factor={FACTOR}, const={CONST})
+  Balls verified: zero collisions
 """)

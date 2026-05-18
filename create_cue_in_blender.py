@@ -9,10 +9,10 @@ import math
 import os
 
 # ============================================================
-# Config — adjust paths as needed
+# Config
 # ============================================================
 tex_dir = os.path.dirname(os.path.abspath(__file__))
-CUE_LENGTH_SCALE = 30  # scale factor to match billiard ball proportions
+SCALE = 30.0
 
 # ============================================================
 # 1. Clean up old cue
@@ -33,10 +33,9 @@ for mat_name in ["CueTip", "CueFerrule", "CueShaft", "CueJoint",
         bpy.data.materials.remove(mat)
 
 # ============================================================
-# 2. Create materials
+# 2. Material factories
 # ============================================================
-def make_mat(name, r, g, b, rough, metallic=0.0):
-    """Create a simple solid-color material."""
+def make_solid_mat(name, r, g, b, rough, metallic=0.0):
     mat = bpy.data.materials.new(name=name)
     mat.use_nodes = True
     for n in mat.node_tree.nodes:
@@ -47,103 +46,123 @@ def make_mat(name, r, g, b, rough, metallic=0.0):
             break
     return mat
 
-def make_pbr_mat(name, color_filename, roughness_filename, normal_filename, fallback_rough=0.3):
-    """Create a full PBR material with BaseColor, Roughness, and Normal maps."""
+def make_pbr_mat(name, color_file, rough_file, normal_file, fallback_rough=0.3):
     mat = bpy.data.materials.new(name=name)
     mat.use_nodes = True
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
-
-    # Clear defaults
     nodes.clear()
 
-    # --- Output ---
-    output = nodes.new('ShaderNodeOutputMaterial')
-    output.location = (600, 0)
-
-    # --- BSDF ---
-    bsdf = nodes.new('ShaderNodeBsdfPrincipled')
-    bsdf.location = (300, 0)
+    output = nodes.new('ShaderNodeOutputMaterial'); output.location = (600, 0)
+    bsdf = nodes.new('ShaderNodeBsdfPrincipled'); bsdf.location = (300, 0)
     bsdf.inputs['Metallic'].default_value = 0.0
     bsdf.inputs['Roughness'].default_value = fallback_rough
-
     links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
 
-    # --- TexCoord ---
-    tex_coord = nodes.new('ShaderNodeTexCoord')
-    tex_coord.location = (-600, 200)
+    tc = nodes.new('ShaderNodeTexCoord'); tc.location = (-600, 200)
 
-    # --- BaseColor texture ---
-    color_tex = nodes.new('ShaderNodeTexImage')
-    color_tex.location = (-400, 200)
-    color_path = os.path.join(tex_dir, color_filename)
-    if os.path.exists(color_path):
-        color_tex.image = bpy.data.images.load(color_path)
+    ct = nodes.new('ShaderNodeTexImage'); ct.location = (-400, 200)
+    cp = os.path.join(tex_dir, color_file)
+    if os.path.exists(cp): ct.image = bpy.data.images.load(cp)
+    links.new(tc.outputs['UV'], ct.inputs['Vector'])
+    links.new(ct.outputs['Color'], bsdf.inputs['Base Color'])
 
-    links.new(tex_coord.outputs['UV'], color_tex.inputs['Vector'])
-    links.new(color_tex.outputs['Color'], bsdf.inputs['Base Color'])
+    rp = os.path.join(tex_dir, rough_file)
+    if os.path.exists(rp):
+        rt = nodes.new('ShaderNodeTexImage'); rt.location = (-400, -100)
+        rt.image = bpy.data.images.load(rp)
+        rt.image.colorspace_settings.name = 'Non-Color'
+        links.new(tc.outputs['UV'], rt.inputs['Vector'])
+        links.new(rt.outputs['Color'], bsdf.inputs['Roughness'])
 
-    # --- Roughness texture (Non-Color) ---
-    rough_path = os.path.join(tex_dir, roughness_filename)
-    if os.path.exists(rough_path):
-        rough_tex = nodes.new('ShaderNodeTexImage')
-        rough_tex.location = (-400, -100)
-        rough_tex.image = bpy.data.images.load(rough_path)
-        rough_tex.image.colorspace_settings.name = 'Non-Color'
-        links.new(tex_coord.outputs['UV'], rough_tex.inputs['Vector'])
-        links.new(rough_tex.outputs['Color'], bsdf.inputs['Roughness'])
-
-    # --- Normal texture (Non-Color) ---
-    normal_path = os.path.join(tex_dir, normal_filename)
-    if os.path.exists(normal_path):
-        normal_tex = nodes.new('ShaderNodeTexImage')
-        normal_tex.location = (-400, -400)
-        normal_tex.image = bpy.data.images.load(normal_path)
-        normal_tex.image.colorspace_settings.name = 'Non-Color'
-
-        normal_map = nodes.new('ShaderNodeNormalMap')
-        normal_map.location = (-100, -400)
-
-        links.new(tex_coord.outputs['UV'], normal_tex.inputs['Vector'])
-        links.new(normal_tex.outputs['Color'], normal_map.inputs['Color'])
-        links.new(normal_map.outputs['Normal'], bsdf.inputs['Normal'])
+    np = os.path.join(tex_dir, normal_file)
+    if os.path.exists(np):
+        nt = nodes.new('ShaderNodeTexImage'); nt.location = (-400, -400)
+        nt.image = bpy.data.images.load(np)
+        nt.image.colorspace_settings.name = 'Non-Color'
+        nm = nodes.new('ShaderNodeNormalMap'); nm.location = (-100, -400)
+        links.new(tc.outputs['UV'], nt.inputs['Vector'])
+        links.new(nt.outputs['Color'], nm.inputs['Color'])
+        links.new(nm.outputs['Normal'], bsdf.inputs['Normal'])
 
     return mat
 
-# Solid parts (colors + roughness values)
-mat_tip     = make_mat("CueTip", 0.88, 0.82, 0.70, 0.55)      # leather
-mat_ferrule = make_mat("CueFerrule", 0.94, 0.94, 0.94, 0.18)   # polished plastic
-mat_joint   = make_mat("CueJoint", 0.28, 0.28, 0.28, 0.10, metallic=0.9)  # dark metal
-mat_bumper  = make_mat("CueBumper", 0.04, 0.04, 0.04, 0.50)     # rubber
-
-# Textured parts (full PBR: BaseColor + Roughness + Normal)
-mat_shaft = make_pbr_mat("CueShaft",
-    "cue_shaft_color.png", "cue_shaft_roughness.png", "cue_shaft_normal.png",
-    fallback_rough=0.30)
-mat_butt = make_pbr_mat("CueButt",
-    "cue_butt_color.png", "cue_butt_roughness.png", "cue_butt_normal.png",
-    fallback_rough=0.22)
-mat_wrap = make_pbr_mat("CueWrap",
-    "cue_wrap_color.png", "cue_wrap_roughness.png", "cue_wrap_normal.png",
-    fallback_rough=0.70)
+# ============================================================
+# 3. Create materials
+# ============================================================
+mat_tip     = make_solid_mat("CueTip", 0.88, 0.82, 0.70, 0.55)
+mat_ferrule = make_solid_mat("CueFerrule", 0.94, 0.94, 0.94, 0.18)
+mat_joint   = make_solid_mat("CueJoint", 0.28, 0.28, 0.28, 0.10, metallic=0.9)
+mat_bumper  = make_solid_mat("CueBumper", 0.04, 0.04, 0.04, 0.50)
+mat_shaft   = make_pbr_mat("CueShaft", "cue_shaft_color.png", "cue_shaft_roughness.png", "cue_shaft_normal.png", 0.30)
+mat_butt    = make_pbr_mat("CueButt", "cue_butt_color.png", "cue_butt_roughness.png", "cue_butt_normal.png", 0.22)
+mat_wrap    = make_pbr_mat("CueWrap", "cue_wrap_color.png", "cue_wrap_roughness.png", "cue_wrap_normal.png", 0.70)
 
 # ============================================================
-# 3. Create cue parts (cylinders, rotated -90 X to lie along Y)
+# 4. Create cue parts
 # ============================================================
 cue_empty = bpy.data.objects.new("Cue", None)
 bpy.context.scene.collection.objects.link(cue_empty)
 
 parts_def = [
-    # (name, radius, length, y_center, material)
-    ("CueTip",       0.0065, 0.012,  0.780, mat_tip),
-    ("CueFerrule",   0.0065, 0.025,  0.761, mat_ferrule),
-    ("CueShaft",     0.010,  0.730,  0.384, mat_shaft),
-    ("CueJoint",     0.011,  0.020,  0.009, mat_joint),
-    ("CueButtUpper", 0.014,  0.200, -0.101, mat_butt),
-    ("CueWrap",      0.014,  0.180, -0.291, mat_wrap),
-    ("CueButtLower", 0.015,  0.200, -0.481, mat_butt),
-    ("CueBumper",    0.015,  0.025, -0.593, mat_bumper),
+    # (name, radius_m, length_m, y_center_m, material, tapered)
+    ("CueTip",       0.0065, 0.012,  0.780, mat_tip,     False),
+    ("CueFerrule",   0.0065, 0.025,  0.761, mat_ferrule, False),
+    ("CueShaft",     0.010,  0.730,  0.384, mat_shaft,   True),
+    ("CueJoint",     0.011,  0.020,  0.009, mat_joint,   False),
+    ("CueButtUpper", 0.014,  0.200, -0.101, mat_butt,    False),
+    ("CueWrap",      0.014,  0.180, -0.291, mat_wrap,    False),
+    ("CueButtLower", 0.015,  0.200, -0.481, mat_butt,    False),
+    ("CueBumper",    0.015,  0.025, -0.593, mat_bumper,  False),
 ]
 
-for name, radius, length, y_center, mat in parts_def:
-    bp
+for name, radius, length, y_center, mat, tapered in parts_def:
+    segments = 32 if not tapered else 64
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=segments, radius=radius * SCALE, depth=length * SCALE,
+        location=(0, 0, 0))
+    obj = bpy.context.active_object
+    obj.name = name
+
+    # Rotate -90 around X to lie along Y
+    obj.rotation_euler.x = -math.pi / 2
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+
+    # Position along Y
+    obj.location.y = y_center * SCALE
+    obj.location.z = 1.0
+
+    # Taper shaft
+    if tapered:
+        import bmesh
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        y_top = (y_center + length/2) * SCALE
+        y_bottom = (y_center - length/2) * SCALE
+        tip_radius = 0.0065 * SCALE
+        joint_radius = radius * SCALE
+
+        for v in bm.verts:
+            wy = obj.matrix_world @ v.co
+            t = (wy.y - y_bottom) / (y_top - y_bottom) if y_top != y_bottom else 0.5
+            t = max(0, min(1, t))
+            r = joint_radius + (tip_radius - joint_radius) * t
+            if v.co.z != 0 or v.co.x != 0:
+                factor = r / (radius * SCALE)
+                v.co.x *= factor
+                v.co.z *= factor
+
+        bm.to_mesh(obj.data)
+        bm.free()
+
+    obj.data.materials.append(mat)
+    obj.parent = cue_empty
+
+# ============================================================
+# 5. Position behind cue ball
+# ============================================================
+cue_ball = bpy.data.objects.get("Ball_00")
+if cue_ball:
+    cue_empty.location = (0, -32.55, 1.0)
+
+print(f"Cue stick created: {len(cue_empty.children)} parts")
